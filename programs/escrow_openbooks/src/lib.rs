@@ -16,11 +16,14 @@ pub mod book_rental {
         price_per_day: u64,
         deposit_amount: u64,
     ) -> Result<()> {
+        let price_per_day_in_lamports = price_per_day * 1_000_000_000; // 100,000,000 lamports
+        let deposit_amount_in_lamports = deposit_amount * 1_000_000_000; // 500,000,000 lamports
+
         ctx.accounts.escrow_account.initializer_key = *ctx.accounts.initializer.key;
         ctx.accounts.escrow_account.initializer_deposit_token_account = *ctx.accounts.initializer_deposit_token_account.to_account_info().key;
         ctx.accounts.escrow_account.initializer_receive_wallet_account = *ctx.accounts.initializer_receive_wallet_account.to_account_info().key;
-        ctx.accounts.escrow_account.price_per_day = price_per_day;
-        ctx.accounts.escrow_account.deposit_amount = deposit_amount;
+        ctx.accounts.escrow_account.price_per_day = price_per_day_in_lamports;
+        ctx.accounts.escrow_account.deposit_amount = deposit_amount_in_lamports;
         ctx.accounts.escrow_account.is_accepted = false;
 
         let (pda, _bump_seed) = Pubkey::find_program_address(&[ESCROW_PDA_SEED], ctx.program_id);
@@ -34,7 +37,6 @@ pub mod book_rental {
     ) -> Result<()> {
         ctx.accounts.escrow_account.taker_key = *ctx.accounts.taker.key;
         ctx.accounts.escrow_account.rental_days = rental_days;
-        ctx.accounts.escrow_account.rent_start_time = Clock::get()?.unix_timestamp;
         Ok(())
     }
 
@@ -48,6 +50,7 @@ pub mod book_rental {
         );
 
         escrow_account.is_accepted = true;
+        escrow_account.rent_start_time = Clock::get()?.unix_timestamp;
 
         // Transfer total amount from taker to PDA
         invoke(
