@@ -16,8 +16,8 @@ pub mod book_rental {
         price_per_day: u64,
         deposit_amount: u64,
     ) -> Result<()> {
-        let price_per_day_in_lamports = price_per_day * 1_000_000_000; // 100,000,000 lamports
-        let deposit_amount_in_lamports = deposit_amount * 1_000_000_000; // 500,000,000 lamports
+        let price_per_day_in_lamports = price_per_day * 1_000_000_000;
+        let deposit_amount_in_lamports = deposit_amount * 1_000_000_000;
 
         ctx.accounts.escrow_account.initializer_key = *ctx.accounts.initializer.key;
         ctx.accounts.escrow_account.initializer_deposit_token_account = *ctx.accounts.initializer_deposit_token_account.to_account_info().key;
@@ -64,6 +64,17 @@ pub mod book_rental {
                 ctx.accounts.pda_account.to_account_info(),
                 ctx.accounts.system_program.to_account_info(),
             ],
+        )?;
+
+        // Transfer the NFT from the initializer to the taker
+        let (_pda, bump_seed) = Pubkey::find_program_address(&[ESCROW_PDA_SEED], ctx.program_id);
+        let seeds = &[&ESCROW_PDA_SEED[..], &[bump_seed]];
+
+        token::transfer(
+            ctx.accounts
+                .into_transfer_to_taker_context()
+                .with_signer(&[&seeds[..]]),
+            1, // Transfer 1 token (NFT)
         )?;
 
         Ok(())
@@ -141,10 +152,13 @@ pub struct AcceptRent<'info> {
     #[account(mut)]
     pub taker: Signer<'info>,
     #[account(mut)]
+    pub taker_deposit_token_account: Account<'info, TokenAccount>,
+    #[account(mut)]
     pub escrow_account: Account<'info, EscrowAccount>,
     #[account(mut)]
     pub pda_account: AccountInfo<'info>,
     pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -154,7 +168,7 @@ pub struct ReturnBook<'info> {
     #[account(mut)]
     pub initializer_receive_wallet_account: AccountInfo<'info>,
     #[account(mut)]
-    pub pda_deposit_token_account: Account<'info, TokenAccount>,
+    pub taker_deposit_token_account: Account<'info, TokenAccount>,
     #[account(mut)]
     pub escrow_account: Account<'info, EscrowAccount>,
     #[account(mut)]
@@ -177,7 +191,7 @@ pub struct EscrowAccount {
 }
 
 impl EscrowAccount {
-    pub const LEN: usize = 32 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 1;
+    pub const LEN: usize = 32 + 32 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 1;
 }
 
 impl<'info> From<&mut InitializeEscrow<'info>>
@@ -199,8 +213,20 @@ impl<'info> From<&mut InitializeEscrow<'info>>
 impl<'info> ReturnBook<'info> {
     fn into_transfer_to_initializer_context(&self) -> CpiContext<'_, '_, '_, 'info, Transfer<'info>> {
         let cpi_accounts = Transfer {
-            from: self.pda_deposit_token_account.to_account_info().clone(),
+            from: self.taker_deposit_token_account.to_account_info().clone(),
             to: self.initializer_receive_wallet_account.to_account_info().clone(),
+            authority: self.pda_account.clone(),
+        };
+        let cpi_program = self.token_program.to_account_info();
+        CpiContext::new(cpi_program, cpi_accounts)
+    }
+}
+
+impl<'info> AcceptRent<'info> {
+    fn into_transfer_to_taker_context(&self) -> CpiContext<'_, '_, '_, 'info, Transfer<'info>> {
+        let cpi_accounts = Transfer {
+            from: self.escrow_account.to_account_info().clone(),
+            to: self.taker_deposit_token_account.to_account_info().clone(),
             authority: self.pda_account.clone(),
         };
         let cpi_program = self.token_program.to_account_info();
@@ -211,7 +237,7 @@ impl<'info> ReturnBook<'info> {
 #[error_code]
 pub enum ErrorCode {
     #[msg("Rental period is not over yet.")]
-    RentalPeriodNotOver,                        
+    RentalPeriodNotOver,
     #[msg("Insufficient funds to pay for rent and deposit.")]
     InsufficientFunds,
 }
