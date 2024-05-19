@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::{program::invoke, system_instruction::transfer, clock::Clock};
+use anchor_lang::solana_program::{program::invoke, system_instruction, clock::Clock};
 use anchor_spl::token::{self, SetAuthority, Token, TokenAccount, Transfer};
 use spl_token::instruction::AuthorityType;
 
@@ -13,11 +13,11 @@ pub mod book_rental {
 
     pub fn initialize_escrow(
         ctx: Context<InitializeEscrow>,
-        price_per_day: u64,
+        price_per_day: u64,                     
         deposit_amount: u64,
     ) -> Result<()> {
-        let price_per_day_in_lamports = price_per_day * 1_000_000_000;
-        let deposit_amount_in_lamports = deposit_amount * 1_000_000_000;
+        let price_per_day_in_lamports = price_per_day * 1_000_000_000; // Convert to lamports
+        let deposit_amount_in_lamports = deposit_amount * 1_000_000_000; // Convert to lamports
 
         ctx.accounts.escrow_account.initializer_key = *ctx.accounts.initializer.key;
         ctx.accounts.escrow_account.initializer_deposit_token_account = *ctx.accounts.initializer_deposit_token_account.to_account_info().key;
@@ -54,7 +54,7 @@ pub mod book_rental {
 
         // Transfer total amount from taker to PDA
         invoke(
-            &transfer(
+            &system_instruction::transfer(
                 ctx.accounts.taker.key,
                 ctx.accounts.pda_account.key,
                 total_amount,
@@ -81,43 +81,64 @@ pub mod book_rental {
     }
 
     pub fn return_book(ctx: Context<ReturnBook>) -> Result<()> {
-        let escrow_account = &ctx.accounts.escrow_account;
-        let current_time = Clock::get()?.unix_timestamp;
-        let rental_end_time = escrow_account.rent_start_time + (escrow_account.rental_days as i64) * 86400;
+    let escrow_account = &ctx.accounts.escrow_account;
+    let current_time = Clock::get()?.unix_timestamp;
+    let rental_end_time = escrow_account.rent_start_time + (escrow_account.rental_days as i64) * 86400;
 
-        require!(
-            current_time >= rental_end_time,
-            ErrorCode::RentalPeriodNotOver
-        );
+    require!(
+        current_time >= rental_end_time,
+        ErrorCode::RentalPeriodNotOver
+    );
 
-        // Transfer the NFT back to the initializer
-        let (_pda, bump_seed) = Pubkey::find_program_address(&[ESCROW_PDA_SEED], ctx.program_id);
-        let seeds = &[&ESCROW_PDA_SEED[..], &[bump_seed]];
+    // Transfer the NFT back to the initializer
+    let (_pda, bump_seed) = Pubkey::find_program_address(&[ESCROW_PDA_SEED], ctx.program_id);
+    let seeds = &[&ESCROW_PDA_SEED[..], &[bump_seed]];
 
-        token::transfer(
-            ctx.accounts
-                .into_transfer_to_initializer_context()
-                .with_signer(&[&seeds[..]]),
-            1, // Transfer 1 token (NFT)
-        )?;
+    token::transfer(
+        ctx.accounts
+            .into_transfer_to_initializer_context()
+            .with_signer(&[&seeds[..]]),
+        1, // Transfer 1 token (NFT)
+    )?;
 
-        // Transfer rent and deposit from PDA to initializer
-        let total_amount = escrow_account.price_per_day * escrow_account.rental_days + escrow_account.deposit_amount;
+    // Transfer the rental fee from PDA to initializer
+    let rental_fee = escrow_account.price_per_day * escrow_account.rental_days;
 
-        invoke(
-            &transfer(
-                ctx.accounts.pda_account.key,
-                ctx.accounts.initializer_receive_wallet_account.key,
-                total_amount,
-            ),
-            &[
-                ctx.accounts.pda_account.to_account_info(),
-                ctx.accounts.initializer_receive_wallet_account.to_account_info(),
-                ctx.accounts.system_program.to_account_info(),
-            ],
-        )?;
+    invoke(
+        &system_instruction::transfer(
+            ctx.accounts.pda_account.key,
+            ctx.accounts.initializer_receive_wallet_account.key,
+            rental_fee,
+        ),
+        &[
+            ctx.accounts.pda_account.to_account_info(),
+            ctx.accounts.initializer_receive_wallet_account.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+        ],
+    )?;
 
-        Ok(())
+    // Transfer the deposit back to the taker
+    invoke(
+        &system_instruction::transfer(
+            ctx.accounts.pda_account.key,
+            ctx.accounts.taker.key,
+            escrow_account.deposit_amount,
+        ),
+        &[
+            ctx.accounts.pda_account.to_account_info(),
+            ctx.accounts.taker.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+        ],
+    )?;
+
+    // Return token account authority back to initializer
+    token::set_authority(
+        ctx.accounts.into_set_authority_context().with_signer(&[&seeds[..]]),
+        AuthorityType::AccountOwner,
+        Some(ctx.accounts.escrow_account.initializer_key),
+    )?;
+
+    Ok(())
     }
 }
 
@@ -154,6 +175,8 @@ pub struct AcceptRent<'info> {
     #[account(mut)]
     pub taker_deposit_token_account: Account<'info, TokenAccount>,
     #[account(mut)]
+    pub initializer_deposit_token_account: Account<'info, TokenAccount>,
+    #[account(mut)]
     pub escrow_account: Account<'info, EscrowAccount>,
     #[account(mut)]
     pub pda_account: AccountInfo<'info>,
@@ -170,6 +193,11 @@ pub struct ReturnBook<'info> {
     #[account(mut)]
     pub taker_deposit_token_account: Account<'info, TokenAccount>,
     #[account(mut)]
+    pub initializer_deposit_token_account: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        close = taker
+    )]
     pub escrow_account: Account<'info, EscrowAccount>,
     #[account(mut)]
     pub pda_account: AccountInfo<'info>,
@@ -191,7 +219,7 @@ pub struct EscrowAccount {
 }
 
 impl EscrowAccount {
-    pub const LEN: usize = 32 + 32 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 1;
+    pub const LEN: usize = 32 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 1;
 }
 
 impl<'info> From<&mut InitializeEscrow<'info>>
@@ -214,8 +242,17 @@ impl<'info> ReturnBook<'info> {
     fn into_transfer_to_initializer_context(&self) -> CpiContext<'_, '_, '_, 'info, Transfer<'info>> {
         let cpi_accounts = Transfer {
             from: self.taker_deposit_token_account.to_account_info().clone(),
-            to: self.initializer_receive_wallet_account.to_account_info().clone(),
+            to: self.initializer_deposit_token_account.to_account_info().clone(),
             authority: self.pda_account.clone(),
+        };
+        let cpi_program = self.token_program.to_account_info();
+        CpiContext::new(cpi_program, cpi_accounts)
+    }
+
+    fn into_set_authority_context(&self) -> CpiContext<'_, '_, '_, 'info, SetAuthority<'info>> {
+        let cpi_accounts = SetAuthority {
+            account_or_mint: self.initializer_deposit_token_account.to_account_info().clone(),
+            current_authority: self.pda_account.clone(),
         };
         let cpi_program = self.token_program.to_account_info();
         CpiContext::new(cpi_program, cpi_accounts)
@@ -225,7 +262,7 @@ impl<'info> ReturnBook<'info> {
 impl<'info> AcceptRent<'info> {
     fn into_transfer_to_taker_context(&self) -> CpiContext<'_, '_, '_, 'info, Transfer<'info>> {
         let cpi_accounts = Transfer {
-            from: self.escrow_account.to_account_info().clone(),
+            from: self.initializer_deposit_token_account.to_account_info().clone(),
             to: self.taker_deposit_token_account.to_account_info().clone(),
             authority: self.pda_account.clone(),
         };
@@ -236,8 +273,8 @@ impl<'info> AcceptRent<'info> {
 
 #[error_code]
 pub enum ErrorCode {
-    #[msg("Rental period is not over yet.")]
-    RentalPeriodNotOver,
+    #[msg("Rental period is not over yet.")]    
+    RentalPeriodNotOver,                        
     #[msg("Insufficient funds to pay for rent and deposit.")]
     InsufficientFunds,
 }
