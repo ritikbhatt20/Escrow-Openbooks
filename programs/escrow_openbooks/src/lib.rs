@@ -3,6 +3,10 @@ use anchor_lang::solana_program::{program::invoke, system_instruction, clock::Cl
 use anchor_spl::token::{self, SetAuthority, Token, TokenAccount, Transfer};
 use spl_token::instruction::AuthorityType;
 
+pub mod errors;
+pub mod state;
+use crate::{errors::ErrorCode, state::*};
+
 declare_id!("8yvPtTFYnTzw5GGBaJ6UgFrURzYg1CeFtKgiuA33cAG2");
 
 #[program]
@@ -205,19 +209,6 @@ pub struct ReturnBook<'info> {
     pub system_program: Program<'info, System>,
 }
 
-#[account]
-pub struct EscrowAccount {
-    pub initializer_key: Pubkey,
-    pub initializer_deposit_token_account: Pubkey,
-    pub initializer_receive_wallet_account: Pubkey,
-    pub taker_key: Pubkey,
-    pub price_per_day: u64,
-    pub deposit_amount: u64,
-    pub rental_days: u64,
-    pub rent_start_time: i64,
-    pub is_accepted: bool,
-}
-
 impl EscrowAccount {
     pub const LEN: usize = 32 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 1;
 }
@@ -269,12 +260,4 @@ impl<'info> AcceptRent<'info> {
         let cpi_program = self.token_program.to_account_info();
         CpiContext::new(cpi_program, cpi_accounts)
     }
-}
-
-#[error_code]
-pub enum ErrorCode {
-    #[msg("Rental period is not over yet.")]    
-    RentalPeriodNotOver,                        
-    #[msg("Insufficient funds to pay for rent and deposit.")]
-    InsufficientFunds,
 }
