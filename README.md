@@ -167,8 +167,3 @@ This README provides an overview of the OpenBooks Escrow Smart Contract and its 
 *Contact:*
 - [Telegram](https://t.me/+m5kYre9QPGsyMTdl)
 ---
-
-This README provides an overview of the OpenBooks Escrow Smart Contract and its implementation. For further assistance or inquiries, please refer to the provided contacts.
-
-*Contact:*
-- [Telegram](https://t.me/+m5kYre9QPGsyMTdl)
