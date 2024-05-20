@@ -62,6 +62,17 @@ pub fn return_book(ctx: Context<ReturnBook>) -> Result<()>
 
 #### `EscrowAccount`
 
+- **Description**: Represents the escrow account storing information about the rental transaction.
+  - `initializer_key`: Public key of the initializer.
+  - `initializer_deposit_token_account`: Public key of the token account used for deposit.
+  - `initializer_receive_wallet_account`: Public key of the wallet account to receive payment.
+  - `taker_key`: Public key of the taker.
+  - `price_per_day`: Price per day for renting the book.
+  - `deposit_amount`: Deposit amount required for the rental.
+  - `rental_days`: Number of days for renting the book.
+  - `rent_start_time`: Unix timestamp indicating the start time of the rental.
+  - `is_accepted`: Flag indicating if the rental request is accepted.
+
 ```rust
 #[account]
 #[derive(Default)]
